@@ -19,10 +19,51 @@ package raft
 
 import "sync"
 import "labrpc"
+import "time"
+import "errors"
 
 // import "bytes"
 // import "labgob"
 
+type ServerState int
+
+const  (
+	Candidate ServerState = iota
+	Follower
+	Leader
+	Stopped
+	Initialized
+
+)
+
+const (
+	MaxLogEntriesPerRequest         = 2000
+	NumberOfLogEntriesAfterSnapshot = 200
+)
+
+const (
+	// DefaultHeartbeatInterval is the interval that the leader will send
+	// AppendEntriesRequests to followers to maintain leadership.
+	DefaultHeartbeatInterval = 50 * time.Millisecond
+
+	DefaultElectionTimeout = 150 * time.Millisecond
+)
+
+// ElectionTimeoutThresholdPercent specifies the threshold at which the server
+// will dispatch warning events that the heartbeat RTT is too close to the
+// election timeout.
+const ElectionTimeoutThresholdPercent = 0.8
+
+//------------------------------------------------------------------------------
+//
+// Errors
+//
+//------------------------------------------------------------------------------
+
+var NotLeaderError = errors.New("raft.Server: Not current leader")
+var DuplicatePeerError = errors.New("raft.Server: Duplicate peer")
+var CommandTimeoutError = errors.New("raft: Command timeout")
+var StopError = errors.New("raft: Has been stopped")
 
 
 //
@@ -42,20 +83,195 @@ type ApplyMsg struct {
 	CommandIndex int
 }
 
+type LogEntry struct {
+
+}
+
+
+//
+// example RequestVote RPC arguments structure.
+// field names must start with capital letters!
+//
+type RequestVoteArgs struct {
+	// Your data here (2A, 2B).
+	Term int
+	CandidateId int
+	LastLogIndex int
+	LastLogTerm int
+}
+
+//
+// example RequestVote RPC reply structure.
+// field names must start with capital letters!
+//
+type RequestVoteReply struct {
+	// Your data here (2A).
+	Term int
+	VoteGranted bool
+}
+
+
+type AppendEntriesArgs struct {
+	Term int
+	LeaderId int
+	prevLogTerm int
+	Entries LogEntry[]
+	LeaderCommit int
+
+}
+
+type AppendEntriesReply struct {
+	Term int
+	Success bool
+}
+
+type ev struct {
+	target      interface{}
+	returnValue interface{}
+	c           chan error
+}
+
 //
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu        sync.Mutex          // Lock to protect shared access to this peer's state
+	mu        sync.RWMutex          // Lock to protect shared access to this peer's state
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
 	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
-
-	// Your data here (2A, 2B, 2C).
-	// Look at the paper's Figure 2 for a description of what
-	// state a Raft server must maintain.
+	currentTerm int
+	votedFor int
+	logs []LogEntry
+	commiteIndex int
+	lastApplied int
+	state ServerState
+	leader int
+	syncedPeer map[string]bool
+	xev *ev
+	// only on leaders
+	nextIndex []int
+	matchIndex []int
+	stopChan chan bool
 
 }
+
+
+func (rf *Raft) setState(st ServerState) {
+	rf.mu.RLock()
+	defer rf.mu.Unlock()
+	prevState := rf.state
+	prevLeader := rf.leader
+	rf.state = st
+	if state == Leader {
+		rf.leader = rf.me
+		rf.syncedPeer = make(map[string]bool)
+	}
+	if prevLeader != rf.leader {
+		rf.DispatchEvent(newEvent(LeaderChangerEventType, rf.leader, prevLeader))
+	}
+
+}
+
+
+
+
+// Generate a new election duration
+func ElectionTimeout() float32 {
+
+}
+
+
+// Generate a new heartbeat duration
+func NewHeartbeatDuration() float32 {
+
+}
+
+func (*rf Raft) CurrentState() ServerState {
+	return rf.state
+}
+
+
+
+
+func (*rf Raft) Loop() {
+	state := rf.CurrentState()
+	for state != Stopped {
+		switch state {
+		case Follower:
+			rf.follwerLoop()
+		case Candidate:
+			rf.candidateLoop()
+		case Leader:
+			rf.leaderLoop()
+		}
+
+	}
+}
+
+func (*rf Raft) followerLoop() {
+	since := time.Now()
+	electionTimeout := rf.ElectionTimeout()
+	timeoutChan := afterBetween(electionTimeout, electionTimeout * 2)
+	for rf.CurrentState() == Follower {
+		var err error
+		update := false
+		select {
+		case <- rf.stopped:
+			rf.setState(Stopped)
+			return
+		case e := <-rf.xev:
+			switch req := e.target.(type) {
+			//TODO COMMAND
+
+			}
+			e.c <- err
+
+		case <-timeoutChan:
+			if rf.promotable() {
+				s.setState(Candidate)
+			} else {
+				update = true
+			}
+
+		}
+		if update {
+			since = time.Now()
+			timeoutChan = afterBetween(electionTimeout, electionTimeout * 2)
+		}
+	}
+}
+
+//TODO
+func (rf *Raft) GetLogLastInfo() {
+	rf.mutex.Rlock()
+	defer rf.mutex.RUnlock()
+
+	if len(rf.logs) == 0 {
+		return 0, 0
+	}
+	return 
+}
+
+func (rf *Raft) candidateLoop() {
+	prevLeader := rf.leader
+	rf.leader = -1
+	lastLogIndex, lastLogTerm := rf.GetLogLastInfo()
+	doVote := true
+	votes := 0
+	var timeoutChan <-chan time.Time
+	var respChan chan *RequestVoteResponse
+	for s.CurrentState() == Candidate {
+		if doVote {
+			rf.currentTerm ++
+			rf.votedFor = rf.me
+			respChan = make(chan *RequestVoteResponse, len(s.peers) - 1)
+			
+		}
+	}
+
+}
+
+
 
 // return currentTerm and whether this server
 // believes it is the leader.
@@ -110,27 +326,26 @@ func (rf *Raft) readPersist(data []byte) {
 
 
 
-//
-// example RequestVote RPC arguments structure.
-// field names must start with capital letters!
-//
-type RequestVoteArgs struct {
-	// Your data here (2A, 2B).
-}
-
-//
-// example RequestVote RPC reply structure.
-// field names must start with capital letters!
-//
-type RequestVoteReply struct {
-	// Your data here (2A).
-}
 
 //
 // example RequestVote RPC handler.
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+	if args.Term < rf.currentTerm {
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
+	}else{
+		if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
+			reply.Term = rf.currentTerm
+			reply.VoteGranted = true
+		}else {
+			reply.Term = rf.currentTerm
+			reply.VoteGranted = false	
+		}
+	}
+
+	rf.BecomeFollowerIfPossible(args.Term)
 }
 
 //
