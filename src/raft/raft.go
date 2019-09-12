@@ -147,7 +147,7 @@ type Raft struct {
 	state ServerState
 	leader int
 	syncedPeer map[string]bool
-	xev *ev
+	c *ev
 	// only on leaders
 	nextIndex []int
 	matchIndex []int
@@ -219,7 +219,7 @@ func (*rf Raft) followerLoop() {
 		case <- rf.stopped:
 			rf.setState(Stopped)
 			return
-		case e := <-rf.xev:
+		case e := <-rf.c:
 			switch req := e.target.(type) {
 			//TODO COMMAND
 
@@ -260,18 +260,127 @@ func (rf *Raft) candidateLoop() {
 	votes := 0
 	var timeoutChan <-chan time.Time
 	var respChan chan *RequestVoteResponse
-	for s.CurrentState() == Candidate {
+	for rf.CurrentState() == Candidate {
 		if doVote {
 			rf.currentTerm ++
 			rf.votedFor = rf.me
-			respChan = make(chan *RequestVoteResponse, len(s.peers) - 1)
-			
+			respChan = make(chan *RequestVoteResponse, len(rf.peers) - 1)
+			for i, peer := range rf.peers {
+				if i == rf.me {
+					continue
+				}
+				rf.routineGroup.Add(1)
+				go func(peer *Peer){
+					defer rf.routineGroup.Done()
+					peer.sendVoteRequest(newRequestVoteRequest(rf.currentTerm, rf.name, lastLogIndex, LastLogTerm), respChan)
+				}(peer)
+
+			}
+			votes = 1
+			timeoutChan = afterBetween(rf.ElectionTimeout(), rf.ElectionTimeout() * 2)
+			doVote = False
+		}
+
+		if c == rf.QuorumSize() {
+			rf.setState(Leader)
+			return
+		}
+		select {
+		case <-rf.stopped:
+			rf.setState(Stopped)
+			return
+
+		case resp := <-respChan:
+			if success: = rf.processVoteResponse(resp); success {
+				candidateLoop++
+			}
+
+		case e := <-rf.c:
+			var err error
+			switch req:= e.target.(type) {
+			case Command:
+				err = NotLeaderError
+			case *AppendEnriesRequest:
+				e.returnValue, _ = rf.proccessAppendEntriesRequest(req)
+			case *RequestVoteRequest:
+				e.returnValue, _ = rf.processRequestVoteRequest(req)
+			}
+			e.c <- err
+
+		case <-timeoutChan:
+			doVote = true
 		}
 	}
 
 }
 
 
+func (s *Raft) leaderLoop() {
+	logIndex, _ = s.lastInfo()
+	for _, peer := range s.peers {
+		peer.setPrevLogIndex(logIndex)
+		peer.startHeartbeat()
+	}
+
+	for s.CurrentState() == Leader {
+		var err error
+		select {
+		case <-s.stopped:
+			for _, peer := range s.peers {
+				peer.stopHeartbeat(false)
+			}
+			s.setState(Stopped)
+			return
+		case e := <-s.c:
+			switch req := e.target.(type) {
+			case Command:
+				s.processCommand(req, e)
+				continue
+			case *AppendEntriesRequest:
+				e.returnValue, _ = s.processAppendEntriesRequest(req)
+			case *AppendEntriesResponse:
+				s.processAppendEntriesResponse(req)
+			case *RequestVoteRequest:
+				e.returnValue, _ = s.processRequestVoteRequest(req)
+			}
+			e.c <- err
+		}
+
+	}
+
+	s.syncedPeer = nil
+
+
+}
+
+
+
+func (s *server) snapshotLoop() {
+	for s.State() == Snapshotting {
+		var err error
+		select {
+		case <-s.stopped:
+			s.setState(Stopped)
+			return
+
+		case e := <-s.c:
+			switch req := e.target.(type) {
+			case Command:
+				err = NotLeaderError
+			case *AppendEntriesRequest:
+				e.returnValue, _ = s.processAppendEntriesRequest(req)
+			case *RequestVoteRequest:
+				e.returnValue, _ = s.processRequestVoteRequest(req)
+			case *SnapshotRecoveryRequest:
+				e.returnValue = s.processSnapshotRecoveryRequest(req)
+			}
+			// Callback to event.
+			e.c <- err
+		}
+	}
+}
+
+ 
 
 // return currentTerm and whether this server
 // believes it is the leader.
