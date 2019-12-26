@@ -8,12 +8,14 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
-import "fmt"
-import "time"
-import "math/rand"
-import "sync/atomic"
-import "sync"
+import (
+	"fmt"
+	"math/rand"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
@@ -53,18 +55,20 @@ func TestReElection2A(t *testing.T) {
 	defer cfg.cleanup()
 
 	cfg.begin("Test (2A): election after network failure")
-
+	println("step 1")
 	leader1 := cfg.checkOneLeader()
-
+	println("step 2")
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
 	cfg.checkOneLeader()
-
+	time.Sleep(10 * RaftElectionTimeout)
+	println("step 3")
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader.
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
 
+	println("step 4")
 	// if there's no quorum, no leader should
 	// be elected.
 	cfg.disconnect(leader2)
@@ -72,10 +76,12 @@ func TestReElection2A(t *testing.T) {
 	time.Sleep(2 * RaftElectionTimeout)
 	cfg.checkNoLeader()
 
+	println("step 5")
 	// if a quorum arises, it should elect a leader.
 	cfg.connect((leader2 + 1) % servers)
 	cfg.checkOneLeader()
 
+	println("step 6")
 	// re-join of last node shouldn't prevent leader from existing.
 	cfg.connect(leader2)
 	cfg.checkOneLeader()
@@ -90,7 +96,7 @@ func TestBasicAgree2B(t *testing.T) {
 
 	cfg.begin("Test (2B): basic agreement")
 
-	iters := 3
+	iters := 1
 	for index := 1; index < iters+1; index++ {
 		nd, _ := cfg.nCommitted(index)
 		if nd > 0 {
@@ -651,7 +657,10 @@ func TestFigure82C(t *testing.T) {
 	cfg.one(rand.Int(), 1, true)
 
 	nup := servers
+	now := time.Now()
+	startTime := time.Now()
 	for iters := 0; iters < 1000; iters++ {
+		now = time.Now()
 		leader := -1
 		for i := 0; i < servers; i++ {
 			if cfg.rafts[i] != nil {
@@ -683,6 +692,8 @@ func TestFigure82C(t *testing.T) {
 				nup += 1
 			}
 		}
+		fmt.Printf("TestFigure82C iter: %d, cost: %f, all time: %f\n", iters, time.Now().Sub(now).Seconds(), time.Now().Sub(startTime).Seconds())
+
 	}
 
 	for i := 0; i < servers; i++ {
@@ -691,8 +702,13 @@ func TestFigure82C(t *testing.T) {
 			cfg.connect(i)
 		}
 	}
-
-	cfg.one(rand.Int(), servers, true)
+	println("reaching agreement")
+	for i := range cfg.rafts {
+		rf := cfg.rafts[i]
+		idx, term := rf.logs.LastInfo()
+		println("raft, idx, term", rf.me, idx, term)
+	}
+	cfg.one(17263548, servers, true)
 
 	cfg.end()
 }
@@ -775,7 +791,12 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			cfg.connect(i)
 		}
 	}
-
+	println("reaching agreement")
+	for i := range cfg.rafts {
+		rf := cfg.rafts[i]
+		idx, term := rf.logs.LastInfo()
+		println("raft ", rf.me, idx, term, rf.logs.Length())
+	}
 	cfg.one(rand.Int()%10000, servers, true)
 
 	cfg.end()

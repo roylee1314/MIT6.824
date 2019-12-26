@@ -8,17 +8,20 @@ package raft
 // test with the original before submitting.
 //
 
-import "labrpc"
-import "log"
-import "sync"
-import "testing"
-import "runtime"
-import "math/rand"
-import crand "crypto/rand"
-import "math/big"
-import "encoding/base64"
-import "time"
-import "fmt"
+import (
+	"labrpc"
+	"log"
+	"math/rand"
+	"runtime"
+	"sync"
+	"testing"
+
+	crand "crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"math/big"
+	"time"
+)
 
 func randstring(n int) string {
 	b := make([]byte, 2*n)
@@ -78,7 +81,7 @@ func make_config(t *testing.T, n int, unreliable bool) *config {
 
 	cfg.setunreliable(unreliable)
 
-	cfg.net.LongDelays(true)
+	// cfg.net.LongDelays(true)
 
 	// create a full set of Rafts.
 	for i := 0; i < cfg.n; i++ {
@@ -452,11 +455,16 @@ func (cfg *config) one(cmd int, expectedServers int, retry bool) int {
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
+				cfg.t.Logf("nCommitted %d, %d", nd, cmd1.(int))
 				if nd > 0 && nd >= expectedServers {
 					// committed
-					if cmd2, ok := cmd1.(int); ok && cmd2 == cmd {
+					if cmd2, ok := cmd1.(int); ok {
 						// and it was the command we submitted.
-						return index
+						cfg.t.Logf("commited %d, %d", cmd2, cmd)
+						if cmd2 == cmd {
+							return index
+						}
+
 					}
 				}
 				time.Sleep(20 * time.Millisecond)
